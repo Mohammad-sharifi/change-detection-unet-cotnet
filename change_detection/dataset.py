@@ -16,6 +16,7 @@ from torchvision import transforms as T
 __all__ = [
     "LevirCDDataset",
     "CD3DDataset",
+    "CD2DDataset",
     "make_cropped_dataset",
 ]
 
@@ -191,3 +192,43 @@ class CD3DDataset(torch.utils.data.Dataset):
             t1, t2, mask3d = t1.permute(2, 0, 1), t2.permute(2, 0, 1), mask3d.permute(2, 0, 1)
         
         return torch.concat([t1, t2], axis=0), mask3d
+
+## Read 2D data
+class CD2DDataset(torch.utils.data.Dataset):
+    def __init__(self, ds_path, partition = "train", crop_size: tuple = (128, 128), limit: int = None, img_format: str = "tif", augments=None):
+        assert partition in ("train", "val", "test")
+        self.imgs_path = {}
+        self.len_imgs = -1
+
+        for folder in ("2010", "2017", "3D"):
+            path = str(ds_path / partition / f"{folder}_{crop_size[0]}_{crop_size[1]}")
+            self.imgs_path[folder] = [os.path.join(path, img) for img in os.listdir(path) if img.endswith(f".{img_format}")]
+            self.imgs_path[folder].sort()
+            if limit:
+                self.imgs_path[folder] = self.imgs_path[folder][:limit]
+
+            if self.len_imgs == -1:
+                self.len_imgs = len(self.imgs_path[folder])
+            else:
+                assert self.len_imgs == len(self.imgs_path[folder])
+
+        self.augments = augments
+
+    def __len__(self):
+        return self.len_imgs
+
+    def __getitem__(self, idx):
+        # read data with tifffile because of 3d mask int16
+        t1 = imageio.v3.imread(self.imgs_path["2010"][idx])
+        t2 = imageio.v3.imread(self.imgs_path["2017"][idx])
+        mask2d = imageio.imread(self.masks2d_fps[idx])
+        #mask3d = tiff.imread(self.imgs_path["3D"][idx])
+
+        if self.augments:
+            sample = self.augments(image=t1, t2=t2, mask2d=mask2d)
+            t1, t2, mask2d = sample['image'], sample['t2'], sample['mask2d'].permute(2, 0, 1)
+        else:
+            t1, t2, mask2d = torch.Tensor(t1), torch.Tensor(t2), torch.Tensor(mask2d)
+            t1, t2, mask2d = t1.permute(2, 0, 1), t2.permute(2, 0, 1), mask2d.permute(2, 0, 1)
+        
+        return torch.concat([t1, t2], axis=0), mask2d
