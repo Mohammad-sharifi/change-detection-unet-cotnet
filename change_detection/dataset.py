@@ -200,7 +200,7 @@ class CD2DDataset(torch.utils.data.Dataset):
         self.imgs_path = {}
         self.len_imgs = -1
 
-        for folder in ("2010", "2017", "3D"):
+        for folder in ("2010", "2017", "2D"):
             path = str(ds_path / partition / f"{folder}_{crop_size[0]}_{crop_size[1]}")
             self.imgs_path[folder] = [os.path.join(path, img) for img in os.listdir(path) if img.endswith(f".{img_format}")]
             self.imgs_path[folder].sort()
@@ -218,11 +218,9 @@ class CD2DDataset(torch.utils.data.Dataset):
         return self.len_imgs
 
     def __getitem__(self, idx):
-        # read data with tifffile because of 3d mask int16
         t1 = imageio.v3.imread(self.imgs_path["2010"][idx])
         t2 = imageio.v3.imread(self.imgs_path["2017"][idx])
         mask2d = imageio.imread(self.masks2d_fps[idx])
-        #mask3d = tiff.imread(self.imgs_path["3D"][idx])
 
         if self.augments:
             sample = self.augments(image=t1, t2=t2, mask2d=mask2d)
