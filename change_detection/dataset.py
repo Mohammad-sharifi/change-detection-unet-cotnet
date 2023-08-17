@@ -220,7 +220,7 @@ class CD2DDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         t1 = imageio.v3.imread(self.imgs_path["2010"][idx])
         t2 = imageio.v3.imread(self.imgs_path["2017"][idx])
-        mask2d = imageio.imread(self.masks2d_fps[idx])
+        mask2d = imageio.imread(self.imgs_path["2D"][idx])
 
         if self.augments:
             sample = self.augments(image=t1, t2=t2, mask2d=mask2d)
