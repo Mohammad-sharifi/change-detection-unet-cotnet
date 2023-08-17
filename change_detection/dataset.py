@@ -17,6 +17,7 @@ __all__ = [
     "LevirCDDataset",
     "CD3DDataset",
     "CD2DDataset",
+    "CD2DDataset_2",
     "make_cropped_dataset",
 ]
 
@@ -234,13 +235,13 @@ class CD2DDataset(torch.utils.data.Dataset):
 
 ## Read 2D data by leveir form
 class CD2DDataset_2(torch.utils.data.Dataset):
-    def __init__(self, ds_path, partition = "train", crop_size: tuple = (128, 128), limit: int = None, img_format: str = "png"):
+    def __init__(self, ds_path, partition = "train", crop_size: tuple = (128, 128), limit: int = None, img_format: str = "tif", augments=None):
         assert partition in ("train", "val", "test")
         self.imgs_path = {}
         self.len_imgs = -1
         self.scaler = PyTMinMaxScalerVectorized()
 
-        for folder in ("A", "B", "label"):
+        for folder in ("2010", "2017", "2D"):
             path = str(ds_path / partition / f"{folder}_{crop_size[0]}_{crop_size[1]}")
             self.imgs_path[folder] = [os.path.join(path, img) for img in os.listdir(path) if img.endswith(f".{img_format}")]
             self.imgs_path[folder].sort()
@@ -251,6 +252,8 @@ class CD2DDataset_2(torch.utils.data.Dataset):
                 self.len_imgs = len(self.imgs_path[folder])
             else:
                 assert self.len_imgs == len(self.imgs_path[folder])
+                
+            self.augments = augments
 
     def __len__(self):
         return self.len_imgs
@@ -261,11 +264,17 @@ class CD2DDataset_2(torch.utils.data.Dataset):
         """
         img1 = tiff.imread(self.imgs_path["2010"][index]) / 255.
         img2 = tiff.imread(self.imgs_path["2017"][index]) / 255.
-        img = torch.cat([img1, img2], axis=0)
         # img = torch.concat(
         #     [self.scaler(img1.float()), self.scaler(img2.float())], 
         #     axis=0
         # )
         label = T.Grayscale()(tiff.imread(self.imgs_path["2D"][index])) / 255.
         label = torch.concat([1-label, label], axis=0)
+        if self.augments:
+            sample = self.augments(img1=img1, img2=img2, label=label)
+            img1, img2, label = sample['img1'], sample['img2'], sample['label'].permute(2, 0, 1)
+        else:
+            img1, img2, label = torch.Tensor(img1), torch.Tensor(img2), torch.Tensor(label)
+            img1, img2, label = img1.permute(2, 0, 1), img2.permute(2, 0, 1), label.permute(2, 0, 1)
+        img = torch.cat([img1, img2], axis=0)
         return img, label
