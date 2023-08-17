@@ -231,3 +231,41 @@ class CD2DDataset(torch.utils.data.Dataset):
             t1, t2, mask2d = t1.permute(2, 0, 1), t2.permute(2, 0, 1), mask2d.permute(2, 0, 1)
         
         return torch.concat([t1, t2], axis=0), mask2d
+
+## Read 2D data by leveir form
+class CD2DDataset_2(torch.utils.data.Dataset):
+    def __init__(self, ds_path, partition = "train", crop_size: tuple = (128, 128), limit: int = None, img_format: str = "png"):
+        assert partition in ("train", "val", "test")
+        self.imgs_path = {}
+        self.len_imgs = -1
+        self.scaler = PyTMinMaxScalerVectorized()
+
+        for folder in ("A", "B", "label"):
+            path = str(ds_path / partition / f"{folder}_{crop_size[0]}_{crop_size[1]}")
+            self.imgs_path[folder] = [os.path.join(path, img) for img in os.listdir(path) if img.endswith(f".{img_format}")]
+            self.imgs_path[folder].sort()
+            if limit:
+                self.imgs_path[folder] = self.imgs_path[folder][:limit]
+
+            if self.len_imgs == -1:
+                self.len_imgs = len(self.imgs_path[folder])
+            else:
+                assert self.len_imgs == len(self.imgs_path[folder])
+
+    def __len__(self):
+        return self.len_imgs
+    
+    def __getitem__(self, index):
+        """
+        Returns stacked A and B and the label image as well
+        """
+        img1 = tiff.imread(self.imgs_path["2010"][index]) / 255.
+        img2 = tiff.imread(self.imgs_path["2017"][index]) / 255.
+        img = torch.cat([img1, img2], axis=0)
+        # img = torch.concat(
+        #     [self.scaler(img1.float()), self.scaler(img2.float())], 
+        #     axis=0
+        # )
+        label = T.Grayscale()(tiff.imread(self.imgs_path["2D"][index])) / 255.
+        label = torch.concat([1-label, label], axis=0)
+        return img, label
