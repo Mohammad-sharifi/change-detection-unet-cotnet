@@ -222,13 +222,13 @@ class CD2DDataset(torch.utils.data.Dataset):
         t1 = imageio.v3.imread(self.imgs_path["2010"][idx])
         t2 = imageio.v3.imread(self.imgs_path["2017"][idx])
         mask2d = imageio.imread(self.imgs_path["2D"][idx])
-        mask2d = torch.from_numpy(mask2d)
+        # mask2d = torch.from_numpy(mask2d) # no need for this since we are converting it to tensor in else clause
 
         if self.augments:
             sample = self.augments(image=t1, t2=t2, mask2d=mask2d)
             t1, t2, mask2d = sample['image'], sample['t2'], sample['mask2d'].permute(2, 0, 1)
         else:
-            t1, t2, mask2d = torch.Tensor(t1), torch.Tensor(t2), torch.Tensor(mask2d)
+            t1, t2, mask2d = torch.from_numpy(t1), torch.from_numpy(t2), torch.from_numpy(mask2d)
             t1, t2, mask2d = t1.permute(2, 0, 1), t2.permute(2, 0, 1), mask2d.permute(2, 0, 1)
         
         return torch.concat([t1, t2], axis=0), mask2d
