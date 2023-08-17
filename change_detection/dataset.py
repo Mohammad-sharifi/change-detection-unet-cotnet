@@ -269,6 +269,7 @@ class CD2DDataset_2(torch.utils.data.Dataset):
         #     axis=0
         # )
         label = imageio.v3.imread(self.imgs_path["2D"][index]) / 255.
+        label = torch.from_numpy(label)
         label = torch.concat([1-label, label], axis=0)
     
         img = torch.cat([img1, img2], axis=0)
