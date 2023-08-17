@@ -262,13 +262,13 @@ class CD2DDataset_2(torch.utils.data.Dataset):
         """
         Returns stacked A and B and the label image as well
         """
-        img1 = tiff.imread(self.imgs_path["2010"][index]) / 255.
-        img2 = tiff.imread(self.imgs_path["2017"][index]) / 255.
+        img1 = imageio.v3.imread(self.imgs_path["2010"][index]) / 255.
+        img2 = imageio.v3.imread(self.imgs_path["2017"][index]) / 255.
         # img = torch.concat(
         #     [self.scaler(img1.float()), self.scaler(img2.float())], 
         #     axis=0
         # )
-        label = tiff.imread(self.imgs_path["2D"][index]) / 255.
+        label = imageio.v3.imread(self.imgs_path["2D"][index]) / 255.
         label = torch.concat([1-label, label], axis=0)
         if self.augments:
             sample = self.augments(img1=img1, img2=img2, label=label)
