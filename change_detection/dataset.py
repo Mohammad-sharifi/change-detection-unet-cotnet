@@ -270,11 +270,7 @@ class CD2DDataset_2(torch.utils.data.Dataset):
         # )
         label = imageio.v3.imread(self.imgs_path["2D"][index]) / 255.
         label = torch.concat([1-label, label], axis=0)
-        if self.augments:
-            sample = self.augments(img1=img1, img2=img2, label=label)
-            img1, img2, label = sample['img1'], sample['img2'], sample['label'].permute(2, 0, 1)
-        else:
-            img1, img2, label = torch.Tensor(img1), torch.Tensor(img2), torch.Tensor(label)
-            img1, img2, label = img1.permute(2, 0, 1), img2.permute(2, 0, 1), label.permute(2, 0, 1)
+    
         img = torch.cat([img1, img2], axis=0)
+        
         return img, label
