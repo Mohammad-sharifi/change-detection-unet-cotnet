@@ -145,6 +145,74 @@ class UpsamplingBlock(nn.Module):
         return self.conv_bn4(self.conv_bn3(out))
 
 
+class ChannelAttnBlock(nn.Module):
+    def __init__(self, in_channels, num_heads, dropout_rate=0.0):
+        super(ChannelAttnBlock, self).__init__()
+
+        self.num_heads = num_heads
+        self.project = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+        self.temp = nn.Parameter(torch.ones(num_heads, 1, 1))
+        self.relu = nn.ReLU()
+        self.softmax = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(dropout_rate) if dropout_rate > 0. else nn.Identity()
+
+    def forward(self, qkv, h, w):
+        q, k, v = qkv.chunk(3, dim=1)
+
+        q = rearrange(q, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        k = rearrange(k, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        v = rearrange(v, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+
+        q = torch.nn.functional.normalize(q, dim=-1)
+        k = torch.nn.functional.normalize(k, dim=-1)
+
+        attn = (q @ k.transpose(-2, -1)) * self.temp
+        attn = self.relu(attn)
+        attn = self.softmax(attn)
+
+        out = (attn @ v)
+        out = rearrange(out, 'b head c (h w) -> b (head c) h w', head=self.num_heads, h=h, w=w)
+
+        out = self.project(out)
+        return self.dropout(out)
+
+
+class SpatialAttnBlock(nn.Module):
+    """
+    Spatial Attention Block
+    """
+    def __init__(self, in_channels, num_heads, dropout_rate=0.0):
+        super(SpatialAttnBlock, self).__init__()
+
+        self.num_heads = num_heads
+        self.project = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+        self.temp = nn.Parameter(torch.ones(num_heads, 1, 1))
+        self.relu = nn.ReLU()
+        self.softmax = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(dropout_rate) if dropout_rate > 0. else nn.Identity()
+
+    def forward(self, qkv, h, w):
+        q, k, v = qkv.chunk(3, dim=1)
+
+        q = rearrange(q, 'b (head c) h w -> b head c (h w)', head=self.num_heads).permute(0, 1, 3, 2)
+        k = rearrange(k, 'b (head c) h w -> b head c (h w)', head=self.num_heads).permute(0, 1, 3, 2)
+        v = rearrange(v, 'b (head c) h w -> b head c (h w)', head=self.num_heads).permute(0, 1, 3, 2)
+
+        q = torch.nn.functional.normalize(q, dim=-1)
+        k = torch.nn.functional.normalize(k, dim=-1)
+
+
+        attn = (q @ k.transpose(-2, -1)) * self.temp
+        attn = self.relu(attn)
+        attn = self.softmax(attn)
+
+        out = (attn @ v).permute(0, 1, 3, 2)
+        out = rearrange(out, 'b head c (h w) -> b (head c) h w', head=self.num_heads, h=h, w=w)
+
+        out = self.project(out)
+        return self.dropout(out)
+
+
 class ChunkGate(nn.Module):
     def forward(self, x):
         x1, x2 = x.chunk(2, dim=1)
@@ -189,91 +257,77 @@ class LayerNorm2d(nn.Module):
         return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
 
 
-class EncoderSpaChAttBlock(nn.Module):
+class EncoderBaseBlock(nn.Module):
     def __init__(self, in_channels, num_heads=3, chn_expanded=2, dropout_rate=0.0):
-        super(EncoderSpaChAttBlock, self).__init__()
+        super(EncoderBaseBlock, self).__init__()
 
         self.num_heads = num_heads
 
         self.qkv = nn.Conv2d(in_channels, in_channels*3, kernel_size=1)
         self.qkv_dwconv = nn.Conv2d(in_channels*3, in_channels*3, kernel_size=3, padding=1, stride=1, groups=in_channels*3)
-
-        self.prj_outc = nn.Conv2d(in_channels, in_channels, kernel_size=1)
-        self.tempc = nn.Parameter(torch.ones(num_heads, 1, 1))
-        self.prj_outs = nn.Conv2d(in_channels, in_channels, kernel_size=1)
-        self.temps = nn.Parameter(torch.ones(num_heads, 1, 1))
+        self.channel_att = ChannelAttnBlock(in_channels, num_heads, dropout_rate)
 
         self.gate = ChunkGate()
 
         ffn_channel = chn_expanded * in_channels
-        self.conv4 = nn.Conv2d(in_channels=in_channels, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1,
+        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1,
                                bias=True)
-        self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=in_channels, kernel_size=1, padding=0, stride=1,
+        self.conv2 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=in_channels, kernel_size=1, padding=0, stride=1,
                                groups=1, bias=True)
 
         self.norm1 = LayerNorm2d(in_channels)
         self.norm2 = LayerNorm2d(in_channels)
 
-        self.dropout1 = nn.Dropout(dropout_rate) if dropout_rate > 0. else nn.Identity()
-        self.dropout2 = nn.Dropout(dropout_rate) if dropout_rate > 0. else nn.Identity()
+        self.dropout = nn.Dropout(dropout_rate) if dropout_rate > 0. else nn.Identity()
 
         self.betac = nn.Parameter(torch.zeros((1, in_channels, 1, 1)), requires_grad=True)
-        self.betas = nn.Parameter(torch.zeros((1, in_channels, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, in_channels, 1, 1)), requires_grad=True)
-        self.relu = nn.ReLU()
-        self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, inp):
         x = inp
         x = self.norm1(x)
         b, c, h, w = x.shape
         qkv = self.qkv_dwconv(self.qkv(x))
-        q, k, v = qkv.chunk(3, dim=1)
 
-        q = rearrange(q, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
-        k = rearrange(k, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
-        v = rearrange(v, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        xc = self.channel_att(qkv, h, w)
 
-        
-        qs = q.clone().permute(0, 1, 3, 2)
-        ks = k.clone().permute(0, 1, 3, 2)
-        vs = v.clone().permute(0, 1, 3, 2)
+        y = inp + xc * self.betac
 
-        q = torch.nn.functional.normalize(q, dim=-1)
-        k = torch.nn.functional.normalize(k, dim=-1)
+        x = self.conv1(self.norm2(y))
+        x = self.gate(x)
+        x = self.conv2(x)
 
-        # # Channel attention
-        attn = (q @ k.transpose(-2, -1)) * self.tempc
-        attn = self.relu(attn)
-        attn = self.softmax(attn)
+        x = self.dropout(x)
 
-        outc = (attn @ v)
+        return y + x * self.gamma
+
+
+class EncoderSpaChAttBlock(EncoderBaseBlock):
+    def __init__(self, in_channels, num_heads=3, chn_expanded=2, dropout_rate=0.0):
+        super(EncoderSpaChAttBlock, self).__init__(in_channels=in_channels, num_heads=num_heads, dropout_rate=dropout_rate)
+
+        self.spatial_att = SpatialAttnBlock(in_channels, num_heads, dropout_rate)
+        self.betas = nn.Parameter(torch.zeros((1, in_channels, 1, 1)), requires_grad=True)
+
+    def forward(self, inp):
+        x = inp
+        x = self.norm1(x)
+        b, c, h, w = x.shape
+        qkv = self.qkv_dwconv(self.qkv(x))
+
+        # Channel attention
+        xc = self.channel_att(qkv, h, w)
 
         # Spatial Attention
-        qs = torch.nn.functional.normalize(qs, dim=-1)
-        ks = torch.nn.functional.normalize(ks, dim=-1)
-
-        attns = (qs @ ks.transpose(-2, -1)) * self.temps
-        attns = self.relu(attns)
-        attns = self.softmax(attns)
-        outs = (attns @ vs)
-        outs = outs.permute(0, 1, 3, 2)
-
-        outc = rearrange(outc, 'b head c (h w) -> b (head c) h w', head=self.num_heads, h=h, w=w)
-        outs = rearrange(outs, 'b head c (h w) -> b (head c) h w', head=self.num_heads, h=h, w=w)
-
-        xc = self.prj_outc(outc)
-        xc = self.dropout1(xc)
-        xs = self.prj_outs(outs)
-        xs = self.dropout1(xs)
+        xs = self.spatial_att(qkv, h, w)
 
         y = inp + xc * self.betac + xs * self.betas
 
-        x = self.conv4(self.norm2(y))
+        x = self.conv1(self.norm2(y))
         x = self.gate(x)
-        x = self.conv5(x)
+        x = self.conv2(x)
 
-        x = self.dropout2(x)
+        x = self.dropout(x)
 
         return y + x * self.gamma
 

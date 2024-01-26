@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .layers.initializers import he_normalizer
-from .layers import layers
+from .layers.layers import ConvBlock, BackBone, UpsamplingBlock, EncoderSpaChAttBlock, EncoderBaseBlock
 
 
 # class SpatialAttentionBlock(nn.Module):
@@ -50,7 +50,6 @@ class ChannelAttentionBlock(nn.Module):
         return out
 
 
-###### New Network ######
 class UnetCotnetNetwork(nn.Module):
     def __init__(self, in_channels, classes):
         super(UnetCotnetNetwork, self).__init__()
@@ -60,22 +59,17 @@ class UnetCotnetNetwork(nn.Module):
         self.channel_att = ChannelAttentionBlock()
 
         # left side blocks
-        self.left_backbone = layers.BackBone(in_channels)
-        # self.left_spa_att = SpatialAttentionBlock((batch_size, 512, 8, 8))
-        # self.left_chn_att = ChannelAttentionBlock()
+        self.left_backbone = BackBone(in_channels)
 
         # right side blocks
-        self.right_backbone = layers.BackBone(in_channels)
-        # self.right_spa_att = SpatialAttentionBlock((batch_size, 512, 8, 8))
-        # self.right_chn_att = ChannelAttentionBlock()
-
+        self.right_backbone = BackBone(in_channels)
 
         # upsampling block
         self.upsamples = nn.ModuleDict({
-            "512_512": layers.UpsamplingBlock(512, 512, (512, 512), (512, 512)), 
-            "256_256": layers.UpsamplingBlock(512, 256, (256, 256), (256, 256)), 
-            "128_128": layers.UpsamplingBlock(256, 128, (128, 128), (128, 128)), 
-            "128_64": layers.UpsamplingBlock(128, 128, (128, 64), (64, 64), merge_upsample=False), 
+            "512_512": UpsamplingBlock(512, 512, (512, 512), (512, 512)), 
+            "256_256": UpsamplingBlock(512, 256, (256, 256), (256, 256)), 
+            "128_128": UpsamplingBlock(256, 128, (128, 128), (128, 128)), 
+            "128_64": UpsamplingBlock(128, 128, (128, 64), (64, 64), merge_upsample=False), 
         })
 
         self.conv_bn = nn.Sequential(
@@ -114,3 +108,102 @@ class UnetCotnetNetwork(nn.Module):
 
         out = self.conv_bn(up9_out)
         return out
+
+
+
+# This network is per our talk to combine encoder in a unet style
+class UnetAttentionBasedNetwork(nn.Module):
+    def __init__(self, in_channels=3, classes=2):
+        super(UnetAttentionBasedNetwork, self).__init__()
+
+        # Left side
+        self.intro_ll1 = nn.Sequential(
+            nn.Conv2d(in_channels, 64, kernel_size=3, padding=1, stride=1, groups=1, bias=True),
+            nn.MaxPool2d(2,2)
+        )
+        self.intro_ll2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, padding=1, stride=1, groups=1, bias=True),
+            nn.MaxPool2d(2,2)
+        )
+        self.intro_ll3 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=3, padding=1, stride=1, groups=1, bias=True),
+            nn.MaxPool2d(2,2)
+        )
+        self.intro_ll4 = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=3, padding=1, stride=1, groups=1, bias=True),
+            nn.MaxPool2d(2,2)
+        )
+
+        self.encoder_ll1 = EncoderBaseBlock(in_channels=64, num_heads=2)
+        self.encoder_ll2 = EncoderBaseBlock(in_channels=128, num_heads=4)
+        self.encoder_ll3 = EncoderSpaChAttBlock(in_channels=256, num_heads=8)
+        self.encoder_ll4 = EncoderSpaChAttBlock(in_channels=512, num_heads=16)
+
+        # Right side
+        self.intro_rl1 = nn.Sequential(
+            nn.Conv2d(in_channels, 64, kernel_size=3, padding=1, stride=1, groups=1, bias=True),
+            nn.MaxPool2d(2,2)
+        )
+        self.intro_rl2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, padding=1, stride=1, groups=1, bias=True),
+            nn.MaxPool2d(2,2)
+        )
+        self.intro_rl3 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=3, padding=1, stride=1, groups=1, bias=True),
+            nn.MaxPool2d(2,2)
+        )
+        self.intro_rl4 = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=3, padding=1, stride=1, groups=1, bias=True),
+            nn.MaxPool2d(2,2)
+        )
+
+        self.encoder_rl1 = EncoderBaseBlock(in_channels=64, num_heads=2)
+        self.encoder_rl2 = EncoderBaseBlock(in_channels=128, num_heads=4)
+        self.encoder_rl3 = EncoderSpaChAttBlock(in_channels=256, num_heads=8)
+        self.encoder_rl4 = EncoderSpaChAttBlock(in_channels=512, num_heads=16)
+
+        # Decoder side
+        self.upsamples = nn.ModuleDict({
+            "512_512": UpsamplingBlock(512, 512, (512, 512), (512, 512)), 
+            "256_256": UpsamplingBlock(512, 256, (256, 256), (256, 256)), 
+            "128_128": UpsamplingBlock(256, 128, (128, 128), (128, 128)), 
+            "128_64": UpsamplingBlock(128, 128, (128, 64), (64, 64), merge_upsample=False), 
+        })
+
+        self.conv_bn = nn.Sequential(
+            nn.Conv2d(64, classes, 1),
+            nn.BatchNorm2d(classes),
+        )
+
+    def forward(self, x_left, x_right):
+        # print("starting shape is: ")
+        # print(x_left.shape, x_right.shape)
+        x_left1 = self.encoder_ll1(self.intro_ll1(x_left))
+        x_left2 = self.encoder_ll2(self.intro_ll2(x_left1))
+        x_left3 = self.encoder_ll3(self.intro_ll3(x_left2))
+        x_left4 = self.encoder_ll4(self.intro_ll4(x_left3))
+
+        x_right1 = self.encoder_rl1(self.intro_rl1(x_right))
+        x_right2 = self.encoder_rl2(self.intro_rl2(x_right1))
+        x_right3 = self.encoder_rl3(self.intro_rl3(x_right2))
+        x_right4 = self.encoder_rl4(self.intro_rl4(x_right3))
+
+        # print("----------------")
+        # print(x_left1.shape, x_right1.shape)
+        # print(x_left2.shape, x_right2.shape)
+        # print(x_left3.shape, x_right3.shape)
+        # print(x_left4.shape, x_right4.shape)
+
+        dist = (x_left4 - x_right4).pow(2)
+
+        up6_out = self.upsamples["512_512"](dist, x_left3, x_right3)
+        # print("up6_out shape --> ", up6_out.shape)
+        up7_out = self.upsamples["256_256"](up6_out, x_left2, x_right2)
+        # print("up7_out shape --> ", up7_out.shape)
+        up8_out = self.upsamples["128_128"](up7_out, x_left1, x_right1)
+        # print("up8_out shape --> ", up8_out.shape)
+        up9_out = self.upsamples["128_64"](up8_out)
+        # print("up9_out shape --> ", up9_out.shape)
+
+        return self.conv_bn(up9_out)
+

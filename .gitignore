@@ -8,3 +8,4 @@ test_bn.py
 speed.*
 tests.yml
 experiments/*
+env/
