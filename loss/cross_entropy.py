@@ -56,3 +56,16 @@ class EdgeCrossEntropy(nn.Module):
         
         loss = self.bce_loss(y, dist) + coef * self.bce_loss(edge_gt, edge_dist)
         return loss
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, weight=None):
+        super(FocalLoss, self).__init__()
+        self.weight = weight
+
+    def forward(self, inputs, targets, alpha=0.5, gamma=2, smooth=1):
+        inputs = inputs.float()
+        ce_loss = F.cross_entropy(inputs, targets, reduction="mean", weight=self.weight)
+        pt = torch.exp(-ce_loss)
+        return (((1 - pt) ** gamma) * ce_loss).mean()
+        
